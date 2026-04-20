@@ -9,8 +9,8 @@ from ..utils.url_parser import parse_url
 # Initialize Gemini model
 def get_model():
     return ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
-        google_api_key=os.getenv("GEMINI_API_KEY"),
+        model="gemini-flash-latest",
+        api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.2
     )
 
@@ -36,51 +36,119 @@ def extract_text_node(state: AgentState) -> dict:
     
     return {}
 
-def summarize_node(state: AgentState) -> dict:
+def analyze_paper_node(state: AgentState) -> dict:
     if state.get("error"): return {}
     model = get_model()
-    prompt = f"Analyze the following research paper and provide a structured summary covering its abstract, purpose, and scope. Be concise and academic.\n\nPaper Text (first 20000 chars):\n{state['paper_text'][:20000]}"
     
-    response = model.invoke([HumanMessage(content=prompt)])
-    return {"summary": response.content}
+    prompt = f"""Analyze the following research paper and extract its key components. 
+Respond ONLY with a valid JSON object with the exact following string keys. Ensure the content for each key is highly structured using concise markdown bullet points and headings. 
+BE EXTREMELY CONCISE. Cut the analysis short; limit each section to 3-4 brief bullet points maximum.
+IMPORTANT: Do NOT use LaTeX (like $ or $$) for mathematical formulas. Instead, you MUST use standard Unicode characters and basic HTML tags like <sub> for subscript and <sup> for superscript (e.g., H<sub>2</sub>O or x<sup>2</sup>). Properly escape all backslashes in your JSON output.
+"title": The title of the paper.
+"summary": A brief, structured summary (use concise bullet points).
+"key_findings": Top contributions and novel results (use concise bullet points).
+"methodology": Break down of research design and models (use concise bullet points).
+"limitations_future": Limitations and future work (use concise bullet points).
+"search_query": A highly effective, semantic search query (5-10 words) based on the core meaning, methodology, and unique findings of the paper. This will be used to find deeply related research papers, NOT just papers with similar titles.
 
-def key_findings_node(state: AgentState) -> dict:
-    if state.get("error"): return {}
-    model = get_model()
-    prompt = f"Extract the top contributions, novel results, and key findings from the following research paper. Format as a bulleted list.\n\nPaper Text (first 20000 chars):\n{state['paper_text'][:20000]}"
+Paper Text (first 25000 chars):
+{state['paper_text'][:25000]}
+"""
     
-    response = model.invoke([HumanMessage(content=prompt)])
-    return {"key_findings": response.content}
-
-def methodology_node(state: AgentState) -> dict:
-    if state.get("error"): return {}
-    model = get_model()
-    prompt = f"Break down the research design, datasets used, and models/algorithms applied in this paper. Explain the methodology clearly.\n\nPaper Text (first 20000 chars):\n{state['paper_text'][:20000]}"
-    
-    response = model.invoke([HumanMessage(content=prompt)])
-    return {"methodology": response.content}
-
-def limitations_node(state: AgentState) -> dict:
-    if state.get("error"): return {}
-    model = get_model()
-    prompt = f"Identify the stated and unstated limitations of this research, as well as suggested future work.\n\nPaper Text (first 20000 chars):\n{state['paper_text'][:20000]}"
-    
-    response = model.invoke([HumanMessage(content=prompt)])
-    return {"limitations_future": response.content}
+    try:
+        response = model.invoke([HumanMessage(content=prompt)])
+        
+        # Handle case where content is a list of blocks
+        raw_content = response.content
+        if isinstance(raw_content, list):
+            text_parts = []
+            for block in raw_content:
+                if isinstance(block, dict) and "text" in block:
+                    text_parts.append(block["text"])
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            content = "".join(text_parts).strip()
+        else:
+            content = str(raw_content).strip()
+        
+        # Clean up markdown code blocks if present
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+            
+        import json
+        data = json.loads(content.strip())
+        
+        def to_string(val):
+            if isinstance(val, list):
+                # If it's a list, join with newlines (useful for bullet points)
+                return "\n".join(f"- {item}" if not str(item).startswith("-") else str(item) for item in val)
+            elif isinstance(val, dict):
+                return json.dumps(val, indent=2)
+            return str(val) if val is not None else ""
+        
+        title = to_string(data.get("title", ""))
+        if not title or title.lower() == "unknown":
+            title = state.get("paper_title")
+            
+        return {
+            "paper_title": title,
+            "search_query": to_string(data.get("search_query", title)),
+            "summary": to_string(data.get("summary", "No summary available.")),
+            "key_findings": to_string(data.get("key_findings", "No key findings available.")),
+            "methodology": to_string(data.get("methodology", "No methodology available.")),
+            "limitations_future": to_string(data.get("limitations_future", "No limitations listed."))
+        }
+    except Exception as e:
+        return {"error": f"Failed to analyze paper: {str(e)}"}
 
 def related_papers_node(state: AgentState) -> dict:
     if state.get("error"): return {}
     
-    title = state.get("paper_title") or "Unknown paper"
-    # Fallback to model extracting title if not found
-    if title == "Unknown Title" or not title:
-        model = get_model()
-        prompt = f"What is the title of this paper? Respond with ONLY the title, nothing else.\n\nPaper Text:\n{state['paper_text'][:2000]}"
+    query = state.get("search_query") or state.get("paper_title") or "Unknown paper"
+    papers = search_related_papers(query)
+    return {"related_papers": papers}
+
+def formatter_agent_node(state: AgentState) -> dict:
+    if state.get("error") or not state.get("related_papers"): return {}
+    
+    model = get_model()
+    
+    import json
+    raw_papers_str = json.dumps(state["related_papers"], indent=2)
+    
+    prompt = f"""You are an expert formatter. Your task is to clean up messy text snippets extracted from research papers.
+The following JSON contains a list of related papers. The 'snippet' fields are often garbled with broken LaTeX (like 'start_POSTSUBSCRIPT' or 'math italic'). 
+Fix the garbled snippets so they are easily readable plain text. Do not hallucinate content, just fix the format.
+Respond ONLY with a valid JSON array of objects, containing the exact same 'title', 'url', and cleaned 'snippet' fields.
+
+Raw Papers JSON:
+{raw_papers_str}
+"""
+    
+    try:
         response = model.invoke([HumanMessage(content=prompt)])
-        title = response.content.strip()
         
-    papers = search_related_papers(title)
-    return {"related_papers": papers, "paper_title": title}
+        raw_content = response.content
+        if isinstance(raw_content, list):
+            text_parts = [block["text"] for block in raw_content if isinstance(block, dict) and "text" in block]
+            text_parts += [block for block in raw_content if isinstance(block, str)]
+            content = "".join(text_parts).strip()
+        else:
+            content = str(raw_content).strip()
+            
+        if content.startswith("```json"): content = content[7:]
+        elif content.startswith("```"): content = content[3:]
+        if content.endswith("```"): content = content[:-3]
+        
+        cleaned_papers = json.loads(content.strip())
+        return {"related_papers": cleaned_papers}
+    except Exception as e:
+        # If formatter fails, just return original papers
+        return {}
 
 def qa_node(state: AgentState) -> dict:
     if state.get("error") or not state.get("qa_history"): return {}
@@ -90,6 +158,7 @@ def qa_node(state: AgentState) -> dict:
     
     prompt = f"""Based on the following research paper, answer the user's question. 
 If the answer is not in the text, state that.
+IMPORTANT: Do NOT use LaTeX (like $ or $$) for mathematical formulas. Instead, you MUST use standard Unicode characters and basic HTML tags like <sub> for subscript and <sup> for superscript (e.g., H<sub>2</sub>O or x<sup>2</sup>).
 
 Paper Text:
 {state['paper_text'][:30000]}
@@ -98,8 +167,20 @@ Question: {question}"""
     
     response = model.invoke([HumanMessage(content=prompt)])
     
+    raw_content = response.content
+    if isinstance(raw_content, list):
+        text_parts = []
+        for block in raw_content:
+            if isinstance(block, dict) and "text" in block:
+                text_parts.append(block["text"])
+            elif isinstance(block, str):
+                text_parts.append(block)
+        answer_text = "".join(text_parts).strip()
+    else:
+        answer_text = str(raw_content).strip()
+        
     # Update the last history item with the answer
     history = state["qa_history"].copy()
-    history[-1]["answer"] = response.content
+    history[-1]["answer"] = answer_text
     
     return {"qa_history": history}

@@ -18,9 +18,24 @@ def search_related_papers(query: str, limit: int = 3) -> list[dict]:
         
     try:
         client = TavilyClient(api_key=api_key)
-        # Enrich query to bias towards research papers
-        enriched_query = f"{query} research paper academic"
-        response = client.search(enriched_query, search_depth="basic", max_results=limit)
+        # Include domains for legitimate academic sources
+        academic_domains = [
+            "sciencedirect.com", 
+            "nature.com", 
+            "ieee.org", 
+            "springer.com", 
+            "arxiv.org", 
+            "semanticscholar.org",
+            "aclweb.org",
+            "pubmed.ncbi.nlm.nih.gov",
+            "dl.acm.org"
+        ]
+        response = client.search(
+            query, 
+            search_depth="basic", 
+            max_results=limit,
+            include_domains=academic_domains
+        )
         
         results = []
         for res in response.get("results", []):

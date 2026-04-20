@@ -8,7 +8,8 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # Load env vars first
-load_dotenv()
+env_path = os.path.join(os.path.dirname(__file__), '.env')
+load_dotenv(env_path)
 
 from backend.agent.graph import analysis_graph, qa_graph
 from backend.agent.state import AgentState

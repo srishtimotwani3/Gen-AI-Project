@@ -1,12 +1,12 @@
 :root {
-    --bg-color: #0a0f1e;
-    --surface-color: rgba(255, 255, 255, 0.05);
-    --surface-hover: rgba(255, 255, 255, 0.08);
-    --border-color: rgba(255, 255, 255, 0.1);
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --accent-1: #00d4ff;
-    --accent-2: #7b2ff7;
+    --bg-color: #f8fafc;
+    --surface-color: rgba(255, 255, 255, 0.85);
+    --surface-hover: rgba(255, 255, 255, 0.95);
+    --border-color: rgba(0, 0, 0, 0.1);
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --accent-1: #0ea5e9;
+    --accent-2: #8b5cf6;
     --error: #ef4444;
 }
 
@@ -105,7 +105,7 @@ header p {
     border: 1px solid var(--border-color);
     border-radius: 1.5rem;
     padding: 2rem;
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
 }
 
 /* Input Section */
@@ -141,8 +141,8 @@ header p {
 
 .tab-btn.active {
     color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.1);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.1);
+    background: rgba(0, 0, 0, 0.05);
+    box-shadow: inset 0 1px 0 rgba(0,0,0,0.05);
 }
 
 .tab-content {
@@ -167,7 +167,7 @@ header p {
 input[type="text"],
 input[type="url"] {
     flex: 1;
-    background: rgba(0, 0, 0, 0.2);
+    background: rgba(255, 255, 255, 0.9);
     border: 1px solid var(--border-color);
     border-radius: 0.75rem;
     padding: 1rem 1.5rem;
@@ -208,7 +208,7 @@ input:focus {
 }
 
 .secondary-btn {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.05);
     color: var(--text-primary);
     border: 1px solid var(--border-color);
     border-radius: 0.75rem;
@@ -220,7 +220,7 @@ input:focus {
 }
 
 .secondary-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.1);
 }
 
 /* Drop Zone */
@@ -231,12 +231,12 @@ input:focus {
     text-align: center;
     cursor: pointer;
     transition: all 0.3s ease;
-    background: rgba(0, 0, 0, 0.1);
+    background: rgba(255, 255, 255, 0.5);
 }
 
 .drop-zone.dragover {
     border-color: var(--accent-1);
-    background: rgba(0, 212, 255, 0.05);
+    background: rgba(14, 165, 233, 0.1);
 }
 
 .drop-zone svg {
@@ -256,7 +256,7 @@ input:focus {
     justify-content: space-between;
     align-items: center;
     padding: 1rem;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.05);
     border-radius: 0.75rem;
 }
 
@@ -269,7 +269,7 @@ input:focus {
 .spinner {
     width: 50px;
     height: 50px;
-    border: 4px solid rgba(255, 255, 255, 0.1);
+    border: 4px solid rgba(0, 0, 0, 0.1);
     border-left-color: var(--accent-1);
     border-radius: 50%;
     animation: spin 1s linear infinite;
@@ -348,7 +348,7 @@ input:focus {
 }
 
 .markdown-content strong {
-    color: white;
+    color: var(--text-primary);
 }
 
 /* Related Papers List */
@@ -359,7 +359,7 @@ input:focus {
 .related-list li {
     margin-bottom: 1rem;
     padding-bottom: 1rem;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .related-list li:last-child {
@@ -406,14 +406,14 @@ input:focus {
 }
 
 .qa-msg.user {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.05);
     align-self: flex-end;
     border-bottom-right-radius: 0;
 }
 
 .qa-msg.bot {
-    background: rgba(0, 212, 255, 0.1);
-    border: 1px solid rgba(0, 212, 255, 0.2);
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.2);
     align-self: flex-start;
     border-bottom-left-radius: 0;
 }

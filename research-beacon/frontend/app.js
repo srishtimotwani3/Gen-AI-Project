@@ -211,16 +211,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // PDF Download
-    downloadPdfBtn.addEventListener('click', () => {
+    downloadPdfBtn.addEventListener('click', async () => {
         const element = document.getElementById('pdf-content-area');
+        
+        // Prevent PDF from cutting off by forcing single column
+        element.classList.add('pdf-exporting');
+        
         const opt = {
-            margin: 1,
+            margin: 0.5,
             filename: 'research-beacon-analysis.pdf',
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 2 },
-            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+            html2canvas: { scale: 2, windowWidth: 900 },
+            jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
         };
-        html2pdf().set(opt).from(element).save();
+        
+        await html2pdf().set(opt).from(element).save();
+        
+        element.classList.remove('pdf-exporting');
     });
 
     // Helpers
