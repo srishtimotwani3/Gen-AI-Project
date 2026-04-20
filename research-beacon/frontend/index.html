@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResearchBeacon | Planning-Based Research Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="background-effects">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <main class="container">
+        <header>
+            <h1>Research<span class="gradient-text">Beacon</span></h1>
+            <p>LangGraph-powered Multi-dimensional Paper Analysis</p>
+        </header>
+
+        <section class="input-section glass-panel">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="url">Paste URL</button>
+                <button class="tab-btn" data-tab="pdf">Upload PDF</button>
+            </div>
+
+            <div class="tab-content active" id="tab-url">
+                <div class="input-group">
+                    <input type="url" id="url-input" placeholder="Enter ArXiv, PubMed, or direct PDF URL...">
+                    <button class="primary-btn" id="analyze-url-btn">Analyze Paper</button>
+                </div>
+            </div>
+
+            <div class="tab-content" id="tab-pdf">
+                <div class="drop-zone" id="drop-zone">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <p>Drag and drop a PDF here or <label for="file-input" class="file-label">browse</label></p>
+                    <input type="file" id="file-input" accept="application/pdf" hidden>
+                </div>
+                <div class="file-info" id="file-info" style="display: none;">
+                    <span id="file-name"></span>
+                    <button class="primary-btn" id="analyze-pdf-btn">Analyze PDF</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="loading-section" id="loading-section" style="display: none;">
+            <div class="spinner"></div>
+            <div class="loading-steps">
+                <div class="step active">Extracting text...</div>
+                <div class="step">Summarizing content...</div>
+                <div class="step">Finding key contributions...</div>
+                <div class="step">Analyzing methodology...</div>
+                <div class="step">Searching related papers...</div>
+            </div>
+        </section>
+
+        <div id="error-message" class="error-banner" style="display: none;"></div>
+
+        <section class="results-section" id="results-section" style="display: none;">
+            <div class="results-header">
+                <h2 id="paper-title-display">Analysis Results</h2>
+                <button class="secondary-btn" id="download-pdf-btn">Download as PDF</button>
+            </div>
+
+            <div class="result-grid" id="pdf-content-area">
+                <div class="card glass-panel col-span-2">
+                    <h3>📋 Summary</h3>
+                    <div id="res-summary" class="markdown-content"></div>
+                </div>
+
+                <div class="card glass-panel">
+                    <h3>🔑 Key Findings & Contributions</h3>
+                    <div id="res-key-findings" class="markdown-content"></div>
+                </div>
+
+                <div class="card glass-panel">
+                    <h3>🔬 Methodology</h3>
+                    <div id="res-methodology" class="markdown-content"></div>
+                </div>
+
+                <div class="card glass-panel">
+                    <h3>⚠️ Limitations & Future Work</h3>
+                    <div id="res-limitations" class="markdown-content"></div>
+                </div>
+
+                <div class="card glass-panel">
+                    <h3>🔗 Related Papers</h3>
+                    <ul id="res-related-papers" class="related-list"></ul>
+                </div>
+            </div>
+
+            <div class="qa-section glass-panel">
+                <h3>💬 Ask about this paper</h3>
+                <div class="qa-history" id="qa-history"></div>
+                <div class="qa-input-group">
+                    <input type="text" id="qa-input" placeholder="E.g., What datasets were used for evaluation?">
+                    <button class="primary-btn" id="qa-submit-btn">Ask</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
