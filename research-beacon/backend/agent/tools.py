@@ -1,9 +1,10 @@
 import os
 from tavily import TavilyClient
 
-def search_related_papers(query: str, limit: int = 3) -> list[dict]:
+def search_related_papers(query: str, limit: int = 5) -> list[dict]:
     """
-    Search for related academic papers using Tavily.
+    Search for related academic papers using Tavily with advanced depth
+    and strict academic domain filtering.
     """
     api_key = os.getenv("TAVILY_API_KEY")
     if not api_key or api_key == "tvly-your-key-here":
@@ -18,31 +19,47 @@ def search_related_papers(query: str, limit: int = 3) -> list[dict]:
         
     try:
         client = TavilyClient(api_key=api_key)
-        # Include domains for legitimate academic sources
+        # Strict academic domains only — no general web results
         academic_domains = [
-            "sciencedirect.com", 
-            "nature.com", 
-            "ieee.org", 
-            "springer.com", 
-            "arxiv.org", 
+            "arxiv.org",
             "semanticscholar.org",
             "aclweb.org",
+            "aclanthology.org",
+            "openreview.net",
             "pubmed.ncbi.nlm.nih.gov",
-            "dl.acm.org"
+            "ieee.org",
+            "dl.acm.org",
+            "nature.com",
+            "science.org",
+            "springer.com",
+            "sciencedirect.com",
+            "proceedings.mlr.press",
+            "papers.nips.cc",
+            "neurips.cc",
+            "iclr.cc",
         ]
         response = client.search(
-            query, 
-            search_depth="basic", 
+            query,
+            search_depth="advanced",
             max_results=limit,
             include_domains=academic_domains
         )
         
         results = []
         for res in response.get("results", []):
+            title = res.get("title", "Unknown Title")
+            url = res.get("url", "")
+            snippet = res.get("content", "")
+            
+            # Basic filter: skip results that don't look like real paper titles
+            # (e.g., homepage links, navigation pages)
+            if len(title) < 10 or url.endswith(("/", "/papers", "/search")):
+                continue
+                
             results.append({
-                "title": res.get("title", "Unknown Title"),
-                "url": res.get("url", ""),
-                "snippet": res.get("content", "")
+                "title": title,
+                "url": url,
+                "snippet": snippet
             })
         return results
     except Exception as e:

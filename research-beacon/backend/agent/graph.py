@@ -4,39 +4,35 @@ from .nodes import (
     extract_text_node,
     analyze_paper_node,
     related_papers_node,
-    formatter_agent_node,
     qa_node
 )
 
 def build_analysis_graph():
     """Builds the sequential LangGraph for full paper analysis."""
     workflow = StateGraph(AgentState)
-    
+
     # Add nodes
     workflow.add_node("extract_text", extract_text_node)
     workflow.add_node("analyze_paper", analyze_paper_node)
     workflow.add_node("related_papers", related_papers_node)
-    workflow.add_node("formatter_agent", formatter_agent_node)
-    
-    # Define sequential edges
+
+    # Sequential edges: extract → analyze → related papers → done
     workflow.add_edge("extract_text", "analyze_paper")
     workflow.add_edge("analyze_paper", "related_papers")
-    workflow.add_edge("related_papers", "formatter_agent")
-    workflow.add_edge("formatter_agent", END)
-    
-    # Set entry point
+    workflow.add_edge("related_papers", END)
+
     workflow.set_entry_point("extract_text")
-    
+
     return workflow.compile()
 
 def build_qa_graph():
     """Builds the single-node LangGraph for Q&A."""
     workflow = StateGraph(AgentState)
-    
+
     workflow.add_node("qa", qa_node)
     workflow.add_edge("qa", END)
     workflow.set_entry_point("qa")
-    
+
     return workflow.compile()
 
 # Compile graphs once to be imported by FastAPI

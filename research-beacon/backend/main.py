@@ -43,6 +43,8 @@ async def analyze_url(req: UrlRequest):
             source_ref=req.url,
             paper_text="",
             paper_title="",
+            paper_authors="",
+            search_query="",
             summary="",
             key_findings="",
             methodology="",
@@ -54,10 +56,17 @@ async def analyze_url(req: UrlRequest):
         
         result = analysis_graph.invoke(initial_state)
         
+        if result.get("error") == "NOT_A_RESEARCH_PAPER":
+            raise HTTPException(
+                status_code=422,
+                detail="This does not appear to be a research paper. Please upload or link to an academic paper."
+            )
         if result.get("error"):
             raise HTTPException(status_code=400, detail=result["error"])
             
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -75,6 +84,8 @@ async def analyze_pdf(file: UploadFile = File(...)):
             source_ref=file.filename,
             paper_text=extracted_text,
             paper_title=file.filename,
+            paper_authors="",
+            search_query="",
             summary="",
             key_findings="",
             methodology="",
@@ -86,10 +97,17 @@ async def analyze_pdf(file: UploadFile = File(...)):
         
         result = analysis_graph.invoke(initial_state)
         
+        if result.get("error") == "NOT_A_RESEARCH_PAPER":
+            raise HTTPException(
+                status_code=422,
+                detail="This does not appear to be a research paper. Please upload an academic paper."
+            )
         if result.get("error"):
             raise HTTPException(status_code=400, detail=result["error"])
             
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -101,6 +119,8 @@ async def ask_question(req: QARequest):
             source_ref="qa",
             paper_text=req.paper_text,
             paper_title="",
+            paper_authors="",
+            search_query="",
             summary="",
             key_findings="",
             methodology="",
@@ -116,6 +136,38 @@ async def ask_question(req: QARequest):
         return {"answer": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/debug")
+async def debug_api_key():
+    """Quick diagnostic: ping each model with a minimal request and report status."""
+    import os
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_core.messages import HumanMessage
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {"error": "GEMINI_API_KEY is not set in .env"}
+
+    from backend.agent.nodes import MODEL_FALLBACK_CHAIN
+    results = {}
+
+    for model_name in MODEL_FALLBACK_CHAIN:
+        try:
+            model = ChatGoogleGenerativeAI(model=model_name, api_key=api_key, temperature=0)
+            resp = model.invoke([HumanMessage(content="Say 'ok' in one word.")])
+            results[model_name] = {"status": "✓ OK", "response": str(resp.content)[:60]}
+        except Exception as e:
+            err = str(e)
+            if "RESOURCE_EXHAUSTED" in err:
+                results[model_name] = {"status": "✗ QUOTA_EXHAUSTED", "error": err[:120]}
+            elif "NOT_FOUND" in err:
+                results[model_name] = {"status": "✗ MODEL_NOT_FOUND", "error": err[:120]}
+            elif "API_KEY_INVALID" in err or "API key not valid" in err:
+                results[model_name] = {"status": "✗ INVALID_API_KEY", "error": err[:120]}
+            else:
+                results[model_name] = {"status": "✗ ERROR", "error": err[:120]}
+
+    return {"api_key_prefix": api_key[:8] + "...", "models": results}
 
 # Mount static files and frontend
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
