@@ -195,7 +195,8 @@ def extract_text_node(state: AgentState) -> dict:
             pass
 
     except Exception as e:
-        return {"error": f"Failed to extract text: {str(e)}"}
+        # Instead of failing with a raw HTTP error, gracefully reject as not a research paper
+        return {"error": "NOT_A_RESEARCH_PAPER"}
 
     return {}
 
@@ -259,10 +260,11 @@ CRITICAL FORMATTING RULES (for all string values):
 1. Every value MUST be a plain STRING — not a nested JSON object, not an array, not a dict.
 2. Use markdown subheadings with ### for organization within strings.
 3. Use bullet points (- item) under each subheading. Keep bullets concise — 1 sentence each.
-4. Do NOT use LaTeX. Use Unicode (α, β, θ, Σ, Δ) and <sub>/<sup> for math notation.
+4. Do NOT use LaTeX. Use Unicode (α, β, θ, Σ, Δ, ², ³) for math notation. Do NOT use HTML tags like <sub> or <sup>. Preserve regular numbers accurately; do NOT convert regular numbers or citations into superscripts.
 5. Use **bold** for key terms and `code` for model names/metrics.
 6. Each analysis section: 2-3 subheadings, 2-3 bullets each.
 7. No raw Python lists, curly braces, or array syntax in values.
+8. CRITICAL: Your output MUST be strictly valid JSON. Any double quotes inside the text values MUST be escaped as \\" or replaced with single quotes ('').
 
 ---
 
@@ -272,9 +274,9 @@ JSON KEYS TO RETURN:
 
 "title": Exact paper title as a plain string. Empty string if not a research paper.
 
-"authors": Comma-separated author names as they appear. "Authors not listed" if absent. Empty string if not a research paper.
+"authors": Comma-separated author names as they appear. IMPORTANT: Clean up and fix any weird letter spacing from the raw text (e.g., turn 'A s h i s h' into 'Ashish'). "Authors not listed" if absent. Empty string if not a research paper.
 
-"summary": Plain string with subheadings:
+"summary": Plain string with subheadings. Do NOT use double quotes inside this text (use single quotes instead):
 ### Background & Motivation
 - bullet
 ### Core Contribution
@@ -282,7 +284,7 @@ JSON KEYS TO RETURN:
 ### Results at a Glance
 - bullet
 
-"key_findings": Plain string with subheadings:
+"key_findings": Plain string with subheadings. Do NOT use double quotes inside this text (use single quotes instead):
 ### Novel Contributions
 - bullet
 ### Performance & Benchmarks
@@ -290,7 +292,7 @@ JSON KEYS TO RETURN:
 ### Broader Impact
 - bullet
 
-"methodology": Plain string with subheadings:
+"methodology": Plain string with subheadings. Do NOT use double quotes inside this text (use single quotes instead):
 ### Architecture & Model Design
 - bullet
 ### Training & Optimization
@@ -298,7 +300,7 @@ JSON KEYS TO RETURN:
 ### Evaluation Protocol
 - bullet
 
-"limitations_future": Plain string with subheadings:
+"limitations_future": Plain string with subheadings. Do NOT use double quotes inside this text (use single quotes instead):
 ### Current Limitations
 - bullet
 ### Future Research Directions
@@ -336,7 +338,20 @@ Document Text (first 18000 chars):
             content = content[:-3]
 
         import json
-        data = json.loads(content.strip())
+        import re
+        try:
+            # Try parsing directly first
+            data = json.loads(content.strip(), strict=False)
+        except json.JSONDecodeError:
+            # If that fails, extract just the JSON dictionary block using regex
+            match = re.search(r'\{.*\}', content.strip(), re.DOTALL)
+            if match:
+                cleaned_content = match.group(0)
+                # Strip control characters
+                cleaned_content = re.sub(r'[\x00-\x1f]', '', cleaned_content)
+                data = json.loads(cleaned_content, strict=False)
+            else:
+                raise ValueError("Could not extract JSON object from response")
 
         # Check research paper classification first
         is_research_paper = data.get("is_research_paper", True)
@@ -366,63 +381,91 @@ Document Text (first 18000 chars):
 
 
 def related_papers_node(state: AgentState) -> dict:
-    """Search for related papers and trim snippets in pure Python — no LLM call."""
+    """Search for related papers and use LLM to beautifully format snippets."""
     if state.get("error"):
         return {}
 
     query = state.get("search_query") or state.get("paper_title") or "Unknown paper"
     paper_title = state.get("paper_title", "").lower().strip()
 
-    papers = search_related_papers(query)
+    papers = search_related_papers(query, limit=6)
 
-    # Filter out the paper being analyzed itself, then trim snippets
-    cleaned = []
+    source_ref = state.get("source_ref", "").lower().strip()
+    # Filter out the paper being analyzed itself using a more robust word-overlap check
+    candidates = []
+    paper_words = set(paper_title.replace('-', ' ').split())
     for p in papers:
         candidate_title = p.get("title", "").lower().strip()
-        # Skip if title closely matches the analyzed paper
-        if paper_title and (
-            candidate_title == paper_title
-            or paper_title in candidate_title
-            or candidate_title in paper_title
-        ):
+        candidate_url = p.get("url", "").lower().strip()
+        candidate_words = set(candidate_title.replace('-', ' ').split())
+        
+        # Filter if the source filename/url matches the candidate url
+        if source_ref and source_ref != "qa" and source_ref in candidate_url:
             continue
+            
+        # If there's a strong word overlap, it's likely the same paper
+        if paper_title:
+            intersection = paper_words.intersection(candidate_words)
+            if len(intersection) >= max(3, len(paper_words) - 2):
+                continue
+            if paper_title in candidate_title or candidate_title in paper_title:
+                continue
+        candidates.append(p)
+        
+    if not candidates:
+        return {"related_papers": []}
+        
+    # Ask LLM to rewrite and format the snippets
+    prompt = f"""You are an expert research editor. I will provide you with a list of related research papers and their raw, often messy snippets (which may contain garbage MathJax or duplicated text like O(n2)O(n^2)).
+    
+Your task is to return a clean JSON array of the top 3 to 4 related papers.
+For each paper, clean up the snippet so that:
+1. It is MAXIMUM 2 to 2.5 lines long (STRICTLY 20-30 words maximum). Do NOT exceed this length under any circumstances.
+2. All formulas, time complexities, and math notations are formatted PERFECTLY using ONLY Unicode. Do NOT use HTML tags like <sub> or <sup>. Do NOT use LaTeX or markdown math. For example, use O(n²) instead of O(n2). Preserve regular numbers and citations as normal text.
+3. The snippet accurately describes the paper based on the messy input.
+4. Do NOT change, shorten, or summarize the "title" field, EXCEPT if the raw title is just a filename (e.g., ends with .pdf). If it's a filename, you MUST replace it with the ACTUAL academic title of that research paper. Otherwise, use the EXACT original title.
+5. CRITICAL: Do NOT include the paper "{state.get('paper_title', '')}" in your output. That is the paper being analyzed, and must not be in the related papers list.
 
-        # Truncate snippet to ~2-3 concise sentences (max 280 chars)
-        snippet = p.get("snippet", "")
-        snippet = _truncate_to_sentences(snippet, max_chars=280)
+Return ONLY a JSON array of objects. No markdown formatting, no code blocks, just the JSON array.
+Format:
+[
+  {{"title": "Paper Title", "url": "https...", "snippet": "Cleaned, beautifully formatted 2-line description..."}}, ...
+]
 
-        cleaned.append({
-            "title": p.get("title", "Unknown Title"),
-            "url": p.get("url", ""),
-            "snippet": snippet
-        })
-
-    return {"related_papers": cleaned}
-
-
-def _truncate_to_sentences(text: str, max_chars: int = 280) -> str:
-    """Truncate text to fit within max_chars, preferring sentence boundaries."""
-    if not text:
-        return ""
-    # Clean common LaTeX artifacts
-    text = re.sub(r'start_POSTSUBSCRIPT|end_POSTSUBSCRIPT|DISPLAYSTYLE|math italic', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-
-    if len(text) <= max_chars:
-        return text
-
-    # Try to cut at a sentence boundary
-    truncated = text[:max_chars]
-    last_period = max(truncated.rfind('. '), truncated.rfind('! '), truncated.rfind('? '))
-    if last_period > max_chars // 2:
-        return truncated[:last_period + 1].strip()
-
-    # Fall back to word boundary
-    last_space = truncated.rfind(' ')
-    if last_space > 0:
-        return truncated[:last_space].strip() + '…'
-
-    return truncated.strip() + '…'
+Raw Papers:
+{str(candidates[:6])}
+"""
+    try:
+        response = invoke_with_fallback([HumanMessage(content=prompt)])
+        content = response.content
+        if isinstance(content, list):
+            content = "".join([b.get("text", "") if isinstance(b, dict) else str(b) for b in content])
+        
+        # Strip code blocks
+        if content.strip().startswith("```json"):
+            content = content.strip()[7:]
+        elif content.strip().startswith("```"):
+            content = content.strip()[3:]
+        if content.strip().endswith("```"):
+            content = content.strip()[:-3]
+            
+        import json
+        import re
+        try:
+            cleaned_papers = json.loads(content.strip(), strict=False)
+        except json.JSONDecodeError:
+            match = re.search(r'\[.*\]', content.strip(), re.DOTALL)
+            if match:
+                cleaned_papers = json.loads(re.sub(r'[\x00-\x1f]', '', match.group(0)), strict=False)
+            else:
+                cleaned_papers = candidates[:4] # fallback to raw
+                
+        # Fallback slice just in case LLM returns more than 4
+        return {"related_papers": cleaned_papers[:4]}
+    except Exception as e:
+        print(f"[ResearchBeacon] LLM cleaning failed for related papers: {e}")
+        # Absolute fallback to raw
+        return {"related_papers": candidates[:4]}
 
 
 def qa_node(state: AgentState) -> dict:
@@ -435,7 +478,7 @@ def qa_node(state: AgentState) -> dict:
 If the answer is not in the text, say so directly.
 
 FORMATTING RULES:
-- Do NOT use LaTeX. Use Unicode (α, β, θ) and HTML tags <sub>/<sup> for math.
+- Do NOT use LaTeX. Use Unicode (α, β, θ, ², ³) for math notation. Do NOT use HTML tags like <sub> or <sup>.
 - Use **bold** for key terms, bullet points for lists, clear paragraph breaks.
 - Be thorough but focused — do not over-explain.
 

@@ -545,6 +545,22 @@ input::placeholder {
     color: var(--text-secondary);
 }
 
+.markdown-content sup,
+.markdown-content sub {
+    font-size: 0.75em;
+    line-height: 0;
+    position: relative;
+    vertical-align: baseline;
+}
+
+.markdown-content sup {
+    top: -0.5em;
+}
+
+.markdown-content sub {
+    bottom: -0.25em;
+}
+
 .markdown-content code {
     background: rgba(37, 99, 235, 0.07);
     color: var(--accent-1);

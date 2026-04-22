@@ -148,26 +148,41 @@ async def debug_api_key():
     if not api_key:
         return {"error": "GEMINI_API_KEY is not set in .env"}
 
-    from backend.agent.nodes import MODEL_FALLBACK_CHAIN
+    from backend.agent.nodes import GEMINI_MODEL_CHAIN, GROQ_MODEL_CHAIN
     results = {}
-
-    for model_name in MODEL_FALLBACK_CHAIN:
-        try:
-            model = ChatGoogleGenerativeAI(model=model_name, api_key=api_key, temperature=0)
-            resp = model.invoke([HumanMessage(content="Say 'ok' in one word.")])
-            results[model_name] = {"status": "✓ OK", "response": str(resp.content)[:60]}
-        except Exception as e:
-            err = str(e)
-            if "RESOURCE_EXHAUSTED" in err:
-                results[model_name] = {"status": "✗ QUOTA_EXHAUSTED", "error": err[:120]}
-            elif "NOT_FOUND" in err:
-                results[model_name] = {"status": "✗ MODEL_NOT_FOUND", "error": err[:120]}
-            elif "API_KEY_INVALID" in err or "API key not valid" in err:
-                results[model_name] = {"status": "✗ INVALID_API_KEY", "error": err[:120]}
-            else:
+    
+    # Try Groq models first
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        from langchain_groq import ChatGroq
+        for model_name in GROQ_MODEL_CHAIN:
+            try:
+                model = ChatGroq(model=model_name, api_key=groq_key, temperature=0)
+                resp = model.invoke([HumanMessage(content="Say 'ok' in one word.")])
+                results[model_name] = {"status": "✓ OK", "response": str(resp.content)[:60]}
+            except Exception as e:
+                err = str(e)
                 results[model_name] = {"status": "✗ ERROR", "error": err[:120]}
+    
+    # Try Gemini models
+    if api_key:
+        for model_name in GEMINI_MODEL_CHAIN:
+            try:
+                model = ChatGoogleGenerativeAI(model=model_name, api_key=api_key, temperature=0)
+                resp = model.invoke([HumanMessage(content="Say 'ok' in one word.")])
+                results[model_name] = {"status": "✓ OK", "response": str(resp.content)[:60]}
+            except Exception as e:
+                err = str(e)
+                if "RESOURCE_EXHAUSTED" in err:
+                    results[model_name] = {"status": "✗ QUOTA_EXHAUSTED", "error": err[:120]}
+                elif "NOT_FOUND" in err:
+                    results[model_name] = {"status": "✗ MODEL_NOT_FOUND", "error": err[:120]}
+                elif "API_KEY_INVALID" in err or "API key not valid" in err:
+                    results[model_name] = {"status": "✗ INVALID_API_KEY", "error": err[:120]}
+                else:
+                    results[model_name] = {"status": "✗ ERROR", "error": err[:120]}
 
-    return {"api_key_prefix": api_key[:8] + "...", "models": results}
+    return {"api_key_prefix": api_key[:8] + "..." if api_key else "None", "models": results}
 
 # Mount static files and frontend
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")

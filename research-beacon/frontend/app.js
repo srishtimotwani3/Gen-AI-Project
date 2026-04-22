@@ -183,11 +183,11 @@ document.addEventListener('DOMContentLoaded', () => {
             data.related_papers.forEach(paper => {
                 const li = document.createElement('li');
                 const safeTitle = escapeHtml(paper.title);
-                const safeSnippet = escapeHtml(paper.snippet || '');
+                const safeSnippet = marked.parse(paper.snippet || '');
                 const safeUrl = encodeURI(paper.url || '#');
                 li.innerHTML = `
                     <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a>
-                    <p>${safeSnippet}</p>
+                    ${safeSnippet}
                 `;
                 relatedList.appendChild(li);
             });
@@ -250,14 +250,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // ── Colour palette ────────────────────────────
         const C = {
-            accent:  [37,  99,  235],
-            title:   [15,  23,  42],
-            heading: [37,  99,  235],
-            sub:     [71,  85,  105],
-            body:    [30,  41,  59],
-            muted:   [100, 116, 139],
-            divider: [203, 213, 225],
-            link:    [37,  99,  235],
+            accent:  [45,  104,  255], // Brilliant Blue
+            title:   [15,  23,  42], // Deep Slate
+            heading: [25,  60,  150], // Navy Blue
+            sub:     [71,  85,  105], // Slate-500
+            body:    [30,  41,  59], // Slate-800
+            muted:   [100, 116, 139], // Slate-400
+            divider: [226, 232, 240], // Light gray
+            link:    [37,  99,  235], // Blue
         };
         const rgb  = (c) => doc.setTextColor(c[0], c[1], c[2]);
         const drgb = (c) => doc.setDrawColor(c[0], c[1], c[2]);
@@ -265,7 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // ── Helpers ───────────────────────────────────
         // Line height in mm for a given font-size in pt
-        const lhMm = (ptSize, factor = 1.55) => ptSize * 0.3528 * factor;
+        const lhMm = (ptSize, factor = 1.4) => ptSize * 0.3528 * factor;
 
         function newPageIfNeeded(spaceNeeded = 10) {
             if (y + spaceNeeded > PAGE_H - MB) {
@@ -284,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Render wrapped text block; returns height used
         function textBlock(text, ptSize, color, opts = {}) {
-            const { bold = false, indent = 0, leading = 1.55, maxW } = opts;
+            const { bold = false, indent = 0, leading = 1.4, maxW } = opts;
             doc.setFontSize(ptSize);
             doc.setFont('helvetica', bold ? 'bold' : 'normal');
             rgb(color);
@@ -292,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const lines = doc.splitTextToSize(text, w);
             const lh    = lhMm(ptSize, leading);
             newPageIfNeeded(lh * lines.length + 2);
-            doc.text(lines, ML + indent, y);
+            doc.text(lines, ML + indent, y, { lineHeightFactor: leading });
             y += lh * lines.length;
             return lh * lines.length;
         }
@@ -311,28 +311,29 @@ document.addEventListener('DOMContentLoaded', () => {
         doc.text(dateStr, PAGE_W - MR, y, { align: 'right' });
         y += 5;
         hRule(C.accent, 0.5);
-        y += 1;
+        y += 8; // Extra space so title doesn't hit the blue line
 
         // Paper title
-        doc.setFontSize(18);
+        doc.setFontSize(22); // Slightly larger title
         doc.setFont('helvetica', 'bold');
         rgb(C.title);
         const titleWrapped = doc.splitTextToSize(currentPaperTitle, CW);
-        newPageIfNeeded(lhMm(18) * titleWrapped.length + 6);
-        doc.text(titleWrapped, ML, y);
-        y += lhMm(18) * titleWrapped.length + 2;
+        newPageIfNeeded(lhMm(22, 1.4) * titleWrapped.length + 8);
+        doc.text(titleWrapped, ML, y, { lineHeightFactor: 1.4 });
+        y += lhMm(22, 1.4) * titleWrapped.length + 4; // Space below title
 
         // Authors
         if (currentAuthors && currentAuthors !== 'Authors not listed') {
-            doc.setFontSize(10);
-            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'normal'); 
             rgb(C.muted);
-            const authWrapped = doc.splitTextToSize(currentAuthors, CW);
-            newPageIfNeeded(lhMm(10) * authWrapped.length + 4);
-            doc.text(authWrapped, ML, y);
-            y += lhMm(10) * authWrapped.length + 3;
+            const cleanAuthors = currentAuthors.replace(/\s{2,}/g, ' ').trim();
+            const authWrapped = doc.splitTextToSize(cleanAuthors, CW);
+            newPageIfNeeded(lhMm(11, 1.5) * authWrapped.length + 6);
+            doc.text(authWrapped, ML, y, { lineHeightFactor: 1.5 });
+            y += lhMm(11, 1.5) * authWrapped.length + 5;
         }
-        y += 2;
+        y += 3;
         hRule();
 
         // ── Section renderer ──────────────────────────
@@ -344,56 +345,60 @@ document.addEventListener('DOMContentLoaded', () => {
             limitations_future: 'Limitations & Future Work',
         };
 
-        function renderSection(label, markdownText) {
+        function renderSection(label, markdownText, isLast = false) {
             if (!markdownText || !markdownText.trim()) return;
-            newPageIfNeeded(18);
-            y += 4;
+            newPageIfNeeded(20);
+            y += 5;
 
             // Section heading accent bar
             frgb(C.accent);
             doc.rect(ML, y - 4, 3, 6, 'F');
 
-            doc.setFontSize(12);
+            doc.setFontSize(13);
             doc.setFont('helvetica', 'bold');
             rgb(C.heading);
             doc.text(label.toUpperCase(), ML + 5, y);
-            y += 2;
-            hRule(C.divider, 0.3);
+            y += 4;
 
             const lines = markdownText.split('\n');
             for (const rawLine of lines) {
                 const line = rawLine.trimEnd();
-                if (!line.trim()) { y += 1.5; continue; }
+                if (!line.trim()) { y += 2; continue; }
 
                 if (line.startsWith('### ')) {
                     // Sub-heading
-                    newPageIfNeeded(10);
-                    y += 2;
+                    newPageIfNeeded(12);
+                    y += 3;
                     const subText = line.replace(/^###\s*/, '').trim();
                     const clean   = stripInlineMarkdown(subText).toUpperCase();
-                    doc.setFontSize(8);
+                    doc.setFontSize(9);
                     doc.setFont('helvetica', 'bold');
                     rgb(C.sub);
                     const subWrapped = doc.splitTextToSize(clean, CW);
-                    doc.text(subWrapped, ML, y);
-                    y += lhMm(8) * subWrapped.length + 1;
+                    doc.text(subWrapped, ML, y, { lineHeightFactor: 1.5 });
+                    y += lhMm(9, 1.5) * subWrapped.length + 1.5;
 
                 } else if (line.startsWith('## ') || line.startsWith('# ')) {
-                    newPageIfNeeded(9);
-                    y += 1.5;
+                    newPageIfNeeded(12);
+                    y += 2.5;
                     const subText = line.replace(/^#{1,2}\s*/, '').trim();
-                    textBlock(stripInlineMarkdown(subText), 10, C.sub, { bold: true });
-                    y += 1;
+                    textBlock(stripInlineMarkdown(subText), 11, C.sub, { bold: true });
+                    y += 1.5;
 
                 } else if (/^[-*]\s+/.test(line)) {
                     // Bullet point
                     const bulletText = line.replace(/^[-*]\s+/, '').trim();
                     const clean = stripInlineMarkdown(bulletText);
                     const ptSize = 10;
-                    const lh = lhMm(ptSize);
+                    const lh = lhMm(ptSize, 1.4); // slightly larger line height for readability
                     const bulletW = CW - 7;
+                    
+                    // CRITICAL: Set font BEFORE splitting so measurements are accurate
+                    doc.setFontSize(ptSize);
+                    doc.setFont('helvetica', 'normal');
+                    
                     const bLines = doc.splitTextToSize(clean, bulletW);
-                    newPageIfNeeded(lh * bLines.length + 2);
+                    newPageIfNeeded(lh * bLines.length + 3);
 
                     // Bullet dot
                     doc.setFontSize(14);
@@ -405,85 +410,93 @@ document.addEventListener('DOMContentLoaded', () => {
                     doc.setFontSize(ptSize);
                     doc.setFont('helvetica', 'normal');
                     rgb(C.body);
-                    doc.text(bLines, ML + 7, y);
-                    y += lh * bLines.length + 0.8;
+                    doc.text(bLines, ML + 7, y, { lineHeightFactor: 1.4 });
+                    y += lh * bLines.length + 1.5;
 
                 } else {
                     // Paragraph
                     const clean = stripInlineMarkdown(line.trim());
-                    if (clean) textBlock(clean, 10, C.body);
-                    y += 0.5;
+                    if (clean) textBlock(clean, 10, C.body, { leading: 1.4 });
+                    y += 1;
                 }
             }
-            y += 3;
+            y += 4;
+            if (!isLast) hRule(C.divider, 0.25);
         }
 
         // ── Related papers renderer ───────────────────
         function renderRelatedPapers(papers) {
             if (!papers || papers.length === 0) return;
-            newPageIfNeeded(18);
-            y += 4;
+            newPageIfNeeded(20);
+            y += 5;
 
             frgb(C.accent);
             doc.rect(ML, y - 4, 3, 6, 'F');
-            doc.setFontSize(12);
+            doc.setFontSize(13);
             doc.setFont('helvetica', 'bold');
             rgb(C.heading);
             doc.text('RELATED PAPERS', ML + 5, y);
-            y += 2;
-            hRule(C.divider, 0.3);
+            y += 8; // Increased spacing to prevent overlap with section header
 
             papers.forEach((paper, idx) => {
-                newPageIfNeeded(18);
+                newPageIfNeeded(25);
                 // Title
                 const titleText = `${idx + 1}.  ${paper.title || 'Untitled'}`;
-                doc.setFontSize(10);
+                doc.setFontSize(10.5);
                 doc.setFont('helvetica', 'bold');
                 rgb(C.link);
                 const tLines = doc.splitTextToSize(titleText, CW);
-                doc.text(tLines, ML, y);
-                y += lhMm(10) * tLines.length + 1;
+                doc.text(tLines, ML, y, { lineHeightFactor: 1.4 });
+                y += lhMm(10.5, 1.4) * tLines.length + 2;
 
                 // Snippet
                 if (paper.snippet) {
-                    doc.setFontSize(9);
+                    doc.setFontSize(9.5);
                     doc.setFont('helvetica', 'normal');
-                    rgb(C.muted);
-                    const sLines = doc.splitTextToSize(paper.snippet, CW - 4);
-                    newPageIfNeeded(lhMm(9) * sLines.length + 2);
-                    doc.text(sLines, ML + 3, y);
-                    y += lhMm(9) * sLines.length + 1;
+                    rgb(C.body);
+                    const cleanSnippet = stripInlineMarkdown(paper.snippet);
+                    const sLines = doc.splitTextToSize(cleanSnippet, CW - 4);
+                    doc.text(sLines, ML + 4, y, { lineHeightFactor: 1.45 });
+                    y += lhMm(9.5, 1.45) * sLines.length + 2;
                 }
 
                 // URL
                 if (paper.url) {
-                    doc.setFontSize(7.5);
+                    doc.setFontSize(8);
                     doc.setFont('helvetica', 'normal');
                     rgb(C.muted);
                     const urlText = paper.url.length > 90
                         ? paper.url.slice(0, 87) + '...'
                         : paper.url;
                     const uLines = doc.splitTextToSize(urlText, CW - 4);
-                    newPageIfNeeded(lhMm(7.5) * uLines.length + 2);
-                    doc.text(uLines, ML + 3, y);
-                    y += lhMm(7.5) * uLines.length + 1;
+                    doc.text(uLines, ML + 4, y, { lineHeightFactor: 1.3 });
+                    y += lhMm(8, 1.3) * uLines.length + 3;
                 }
 
                 // Divider between papers
                 if (idx < papers.length - 1) {
+                    y += 3; // Minimal gap before divider
                     drgb(C.divider);
-                    doc.setLineWidth(0.15);
-                    doc.line(ML, y, PAGE_W - MR, y);
-                    y += 3;
+                    doc.setLineWidth(0.2);
+                    doc.line(ML + 4, y, PAGE_W - MR, y);
+                    y += 5; // Space after divider
                 }
             });
         }
 
         // ── Render all sections ───────────────────────
-        renderSection(SECTION_LABELS.summary,            rawSections.summary);
-        renderSection(SECTION_LABELS.key_findings,       rawSections.key_findings);
-        renderSection(SECTION_LABELS.methodology,        rawSections.methodology);
-        renderSection(SECTION_LABELS.limitations_future, rawSections.limitations_future);
+        const sectionsToRender = [
+            { label: SECTION_LABELS.summary, text: rawSections.summary },
+            { label: SECTION_LABELS.key_findings, text: rawSections.key_findings },
+            { label: SECTION_LABELS.methodology, text: rawSections.methodology },
+            { label: SECTION_LABELS.limitations_future, text: rawSections.limitations_future }
+        ].filter(s => s.text && s.text.trim());
+
+        sectionsToRender.forEach((s, idx) => {
+            const isLastSection = (idx === sectionsToRender.length - 1) && (!rawSections.related_papers || rawSections.related_papers.length === 0);
+            renderSection(s.label, s.text, isLastSection);
+        });
+
         renderRelatedPapers(rawSections.related_papers);
 
         // ── Page footers ──────────────────────────────
@@ -559,7 +572,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <span style="font-weight:400;font-size:0.9rem;">${escapeHtml(msg)}</span>
         `;
         errorBanner.style.display = 'block';
-        setTimeout(() => { errorBanner.style.display = 'none'; }, 8000);
     }
 
     function escapeHtml(text) {
