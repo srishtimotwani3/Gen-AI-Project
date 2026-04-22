@@ -2,131 +2,175 @@ import os
 import re
 import time
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
 from .state import AgentState
 from .tools import search_related_papers
 from ..utils.pdf_parser import parse_pdf_bytes
 from ..utils.url_parser import parse_url
 
-# ── Model fallback chain ─────────────────────────────────────────────────────
-# Each model has its own independent free-tier quota pool.
-# Using explicit versioned names to avoid NOT_FOUND errors on the API.
-MODEL_FALLBACK_CHAIN = [
+# ── Groq models (tried first — generous free tier, very fast) ────────────────
+GROQ_MODEL_CHAIN = [
+    "llama-3.3-70b-versatile",   # 32K context, 14,400 RPD free
+    "llama-3.1-8b-instant",      # 128K context, 14,400 RPD free — separate pool
+]
+
+# ── Gemini fallback chain (used only if ALL Groq models are exhausted) ───────
+GEMINI_MODEL_CHAIN = [
     "gemini-2.0-flash",           # ~1,500 RPD free tier
     "gemini-2.0-flash-lite",      # lighter 2.0 variant, separate quota pool
     "gemini-1.5-flash-latest",    # ~1,500 RPD free tier
     "gemini-1.5-flash-8b-latest", # smallest/fastest, separate quota pool
 ]
 
+# ── Error classifier helpers ──────────────────────────────────────────────────
+
 def _is_daily_quota_exhausted(err_str: str) -> bool:
     """Daily RPD limit hit — skip to next model."""
     return (
         "GenerateRequestsPerDayPerProjectPerModel" in err_str
+        or "rate_limit_exceeded" in err_str.lower()
+        or "daily" in err_str.lower() and "limit" in err_str.lower()
         or ("RESOURCE_EXHAUSTED" in err_str and "'limit': 0" in err_str)
         or ("RESOURCE_EXHAUSTED" in err_str and "limit: 0" in err_str)
     )
 
 def _is_model_not_found(err_str: str) -> bool:
-    """The specific model name doesn't exist in this API version — skip to next."""
-    # Only match real 404 model-not-found, NOT broad "not found" strings
-    # which could swallow API key permission errors
+    """The specific model name doesn't exist — skip to next."""
     return (
         "NOT_FOUND" in err_str
         and ("is not found for API version" in err_str or "not supported for generateContent" in err_str)
-    )
+    ) or "model not found" in err_str.lower()
 
 def _is_api_not_enabled(err_str: str) -> bool:
-    """True only for actual invalid API key or project API not enabled."""
+    """Invalid API key or project API not enabled — stop everything."""
     return (
         "API_KEY_INVALID" in err_str
         or "API key not valid" in err_str
         or ("PERMISSION_DENIED" in err_str and "generateContent" in err_str)
         or "not been enabled" in err_str
         or "SERVICE_DISABLED" in err_str
+        or "invalid_api_key" in err_str.lower()
+        or "authentication" in err_str.lower() and "failed" in err_str.lower()
     )
 
 def _is_rate_limited(err_str: str) -> bool:
-    """Transient per-minute rate limit — short wait then retry."""
-    return "RESOURCE_EXHAUSTED" in err_str or "429" in err_str
+    """Transient per-minute / per-second rate limit — short wait then retry."""
+    return (
+        "RESOURCE_EXHAUSTED" in err_str
+        or "429" in err_str
+        or "too_many_requests" in err_str.lower()
+        or "tokens per" in err_str.lower()
+    )
+
+def _is_context_too_long(err_str: str) -> bool:
+    """Input exceeds the model's context window — skip to a larger-context model."""
+    return (
+        "context_length_exceeded" in err_str.lower()
+        or "maximum context length" in err_str.lower()
+        or "Request too large" in err_str
+    )
 
 def _parse_retry_delay(err_str: str, default: int = 15) -> int:
     match = re.search(r"retryDelay.*?(\d+)s", err_str)
-    return int(match.group(1)) + 2 if match else default
+    if match:
+        return int(match.group(1)) + 2
+    # Groq often gives "Please try again in Xs"
+    match2 = re.search(r"try again in ([\d.]+)s", err_str)
+    if match2:
+        return int(float(match2.group(1))) + 2
+    return default
 
-def invoke_with_fallback(messages, temperature: float = 0.3):
-    """
-    Try each model in MODEL_FALLBACK_CHAIN in order.
-    Per-model behaviour:
-      - Daily quota exhausted / model not found → skip immediately to next model.
-      - Per-minute rate limit → wait the API-suggested delay, retry ONCE on the
-        same model, then move to the next model (never crash the whole chain).
-      - Invalid API key / API not enabled → fail immediately (no point trying others).
-      - Any other unexpected error → fail immediately.
-    """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set in the .env file.")
 
-    for model_name in MODEL_FALLBACK_CHAIN:
-        model = ChatGoogleGenerativeAI(
-            model=model_name,
-            api_key=api_key,
-            temperature=temperature,
-        )
+def _try_model_chain(chain_models, build_model_fn, messages):
+    """
+    Generic helper: iterate over a list of model names, calling build_model_fn(name)
+    to create the LangChain model object. Returns the response on first success.
+    Returns None if ALL models in the chain are quota-exhausted/not-found.
+    Raises immediately on invalid-key or unexpected errors.
+    """
+    for model_name in chain_models:
+        model = build_model_fn(model_name)
         print(f"[ResearchBeacon] Trying model: {model_name}")
-        skip_to_next = False  # flag to break out of per_minute loop cleanly
+        skip_to_next = False
 
-        for per_minute_attempt in range(2):
+        for attempt in range(2):
             try:
                 response = model.invoke(messages)
-                print(f"[ResearchBeacon] ✓ Success with: {model_name}")
+                print(f"[ResearchBeacon] [OK] Success with: {model_name}")
                 return response
 
             except Exception as e:
                 err_str = str(e)
-                print(f"[ResearchBeacon] ✗ {model_name} (attempt {per_minute_attempt+1}): {err_str[:140]}")
+                print(f"[ResearchBeacon] [FAIL] {model_name} (attempt {attempt+1}): {err_str[:160]}")
 
-                # ── Invalid API key / API not enabled → stop everything ──────
                 if _is_api_not_enabled(err_str):
-                    raise RuntimeError(
-                        f"API key error: {err_str[:200]}\n\n"
-                        "Check that:\n"
-                        "1. GEMINI_API_KEY in .env is correct and the file is saved.\n"
-                        "2. Generative Language API is enabled at console.cloud.google.com.\n"
-                        "3. You restarted the server after changing .env."
-                    )
+                    raise  # propagate key errors immediately
 
-                # ── Daily quota or model doesn't exist → try next model ──────
-                if _is_daily_quota_exhausted(err_str) or _is_model_not_found(err_str):
-                    print(f"[ResearchBeacon] {model_name}: daily quota/not-found, moving on...")
+                if _is_daily_quota_exhausted(err_str) or _is_model_not_found(err_str) or _is_context_too_long(err_str):
+                    print(f"[ResearchBeacon] {model_name}: quota/not-found/context, moving on...")
                     skip_to_next = True
                     break
 
-                # ── Per-minute rate limit ────────────────────────────────────
                 if _is_rate_limited(err_str):
-                    if per_minute_attempt == 0:
+                    if attempt == 0:
                         wait = _parse_retry_delay(err_str, default=20)
-                        print(f"[ResearchBeacon] {model_name}: per-minute limit, waiting {wait}s then retrying...")
+                        print(f"[ResearchBeacon] {model_name}: rate-limited, waiting {wait}s...")
                         time.sleep(wait)
-                        continue  # retry once on the same model
+                        continue
                     else:
-                        # Still rate-limited after retry → try next model
-                        print(f"[ResearchBeacon] {model_name}: still rate-limited after retry, moving on...")
+                        print(f"[ResearchBeacon] {model_name}: still rate-limited, moving on...")
                         skip_to_next = True
                         break
 
-                # ── Truly unexpected error (not quota-related) ───────────────
-                raise
+                raise  # unexpected error
 
         if not skip_to_next:
-            # Should not reach here normally (success returns early), but be safe
             break
 
+    return None  # all models in this chain exhausted
+
+
+def invoke_with_fallback(messages, temperature: float = 0.3):
+    """
+    Primary: try Groq models (fast, generous free tier).
+    Fallback: try Gemini models if all Groq models are quota-exhausted.
+    Raises a clear RuntimeError if every model in both chains is exhausted.
+    """
+    groq_key = os.getenv("GROQ_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+
+    # ── 1. Try Groq first ────────────────────────────────────────────────────
+    if groq_key:
+        def build_groq(name):
+            return ChatGroq(model=name, api_key=groq_key, temperature=temperature)
+
+        result = _try_model_chain(GROQ_MODEL_CHAIN, build_groq, messages)
+        if result is not None:
+            return result
+        print("[ResearchBeacon] All Groq models exhausted, switching to Gemini...")
+    else:
+        print("[ResearchBeacon] GROQ_API_KEY not set, skipping Groq and using Gemini directly.")
+
+    # ── 2. Fall back to Gemini ────────────────────────────────────────────────
+    if not gemini_key:
+        raise RuntimeError(
+            "Neither GROQ_API_KEY nor GEMINI_API_KEY is configured in .env.\n"
+            "Add at least one of them and restart the server."
+        )
+
+    def build_gemini(name):
+        return ChatGoogleGenerativeAI(model=name, api_key=gemini_key, temperature=temperature)
+
+    result = _try_model_chain(GEMINI_MODEL_CHAIN, build_gemini, messages)
+    if result is not None:
+        return result
+
     raise RuntimeError(
-        "All Gemini models are quota-exhausted for today.\n"
-        "• Quotas reset at midnight Pacific Time (~1:30 PM IST).\n"
-        "• To use the app right now: go to console.cloud.google.com, enable billing "
-        "on your project (costs ~$0.0001/request, effectively free for personal use)."
+        "All LLM models are quota-exhausted.\n"
+        "• Groq free tier: 14,400 requests/day — resets daily at midnight UTC.\n"
+        "• Gemini free tier: ~1,500 requests/day — resets at midnight Pacific (~1:30 PM IST).\n"
+        "• Add a GROQ_API_KEY to .env for a much larger free quota (see README for setup guide)."
     )
 
 
@@ -264,8 +308,8 @@ JSON KEYS TO RETURN:
 
 ---
 
-Document Text (first 25000 chars):
-{state['paper_text'][:25000]}
+Document Text (first 18000 chars):
+{state['paper_text'][:18000]}
 """
 
     try:
@@ -395,8 +439,8 @@ FORMATTING RULES:
 - Use **bold** for key terms, bullet points for lists, clear paragraph breaks.
 - Be thorough but focused — do not over-explain.
 
-Paper Text:
-{state['paper_text'][:30000]}
+Paper Text (excerpt):
+{state['paper_text'][:20000]}
 
 Question: {question}"""
 

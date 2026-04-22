@@ -236,238 +236,279 @@ document.addEventListener('DOMContentLoaded', () => {
         qaHistory.scrollTop = qaHistory.scrollHeight;
     }
 
-    // ── PDF Download — text-based via jsPDF ──────────
+    // ── PDF Download — clean text-based via jsPDF ────
     downloadPdfBtn.addEventListener('click', () => {
-        // jsPDF is bundled inside html2pdf as window.jspdf
+        // jsPDF UMD exports as window.jspdf.jsPDF
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
 
-        const PAGE_W = doc.internal.pageSize.getWidth();
-        const PAGE_H = doc.internal.pageSize.getHeight();
-        const MARGIN_L = 20;
-        const MARGIN_R = 20;
-        const MARGIN_T = 22;
-        const MARGIN_B = 22;
-        const CONTENT_W = PAGE_W - MARGIN_L - MARGIN_R;
-        let y = MARGIN_T;
+        const PAGE_W  = doc.internal.pageSize.getWidth();   // 210
+        const PAGE_H  = doc.internal.pageSize.getHeight();  // 297
+        const ML = 18, MR = 18, MT = 20, MB = 20;
+        const CW = PAGE_W - ML - MR;   // content width
+        let y = MT;
 
-        // Color palette
-        const COLORS = {
-            accent:     [37,  99,  235],  // blue
-            title:      [15,  23,  42],   // near black
-            heading:    [37,  99,  235],  // blue for section h3
-            subheading: [71,  85,  105],  // slate-600 for ### subs
-            body:       [30,  41,  59],   // slate-800
-            muted:      [100, 116, 139],  // slate-500
-            divider:    [226, 232, 240],  // slate-200
-            link:       [37,  99,  235],
+        // ── Colour palette ────────────────────────────
+        const C = {
+            accent:  [37,  99,  235],
+            title:   [15,  23,  42],
+            heading: [37,  99,  235],
+            sub:     [71,  85,  105],
+            body:    [30,  41,  59],
+            muted:   [100, 116, 139],
+            divider: [203, 213, 225],
+            link:    [37,  99,  235],
         };
+        const rgb  = (c) => doc.setTextColor(c[0], c[1], c[2]);
+        const drgb = (c) => doc.setDrawColor(c[0], c[1], c[2]);
+        const frgb = (c) => doc.setFillColor(c[0], c[1], c[2]);
 
-        function setColor(rgb) { doc.setTextColor(rgb[0], rgb[1], rgb[2]); }
-        function setDrawColor(rgb) { doc.setDrawColor(rgb[0], rgb[1], rgb[2]); }
+        // ── Helpers ───────────────────────────────────
+        // Line height in mm for a given font-size in pt
+        const lhMm = (ptSize, factor = 1.55) => ptSize * 0.3528 * factor;
 
-        function checkPage(needed = 8) {
-            if (y + needed > PAGE_H - MARGIN_B) {
+        function newPageIfNeeded(spaceNeeded = 10) {
+            if (y + spaceNeeded > PAGE_H - MB) {
                 doc.addPage();
-                y = MARGIN_T;
+                y = MT;
             }
         }
 
-        function drawHRule(color = COLORS.divider) {
-            checkPage(4);
-            setDrawColor(color);
-            doc.setLineWidth(0.3);
-            doc.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+        function hRule(color = C.divider, weight = 0.25) {
+            newPageIfNeeded(5);
+            drgb(color);
+            doc.setLineWidth(weight);
+            doc.line(ML, y, PAGE_W - MR, y);
             y += 4;
         }
 
-        function addWrappedText(text, fontSize, color, opts = {}) {
-            const { bold = false, indent = 0, lineHeightFactor = 1.5, maxWidth } = opts;
-            doc.setFontSize(fontSize);
-            setColor(color);
+        // Render wrapped text block; returns height used
+        function textBlock(text, ptSize, color, opts = {}) {
+            const { bold = false, indent = 0, leading = 1.55, maxW } = opts;
+            doc.setFontSize(ptSize);
             doc.setFont('helvetica', bold ? 'bold' : 'normal');
-            const mw = maxWidth || (CONTENT_W - indent);
-            const lines = doc.splitTextToSize(text, mw);
-            const lineH = fontSize * 0.3528 * lineHeightFactor; // pt to mm approx
-            checkPage(lineH * lines.length + 2);
-            doc.text(lines, MARGIN_L + indent, y);
-            y += lineH * lines.length;
-            return lineH * lines.length;
+            rgb(color);
+            const w     = (maxW !== undefined ? maxW : CW) - indent;
+            const lines = doc.splitTextToSize(text, w);
+            const lh    = lhMm(ptSize, leading);
+            newPageIfNeeded(lh * lines.length + 2);
+            doc.text(lines, ML + indent, y);
+            y += lh * lines.length;
+            return lh * lines.length;
         }
 
-        // ── Cover block ──────────────────────────────
-        // ResearchBeacon brand line
+        // ── Header bar ────────────────────────────────
         doc.setFontSize(10);
         doc.setFont('helvetica', 'bold');
-        setColor(COLORS.accent);
-        doc.text('ResearchBeacon', MARGIN_L, y);
+        rgb(C.accent);
+        doc.text('ResearchBeacon', ML, y);
         doc.setFont('helvetica', 'normal');
-        setColor(COLORS.muted);
         doc.setFontSize(9);
-        const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-        doc.text(dateStr, PAGE_W - MARGIN_R, y, { align: 'right' });
-        y += 6;
-        drawHRule(COLORS.accent);
-        y += 2;
+        rgb(C.muted);
+        const dateStr = new Date().toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric'
+        });
+        doc.text(dateStr, PAGE_W - MR, y, { align: 'right' });
+        y += 5;
+        hRule(C.accent, 0.5);
+        y += 1;
 
         // Paper title
-        doc.setFontSize(17);
+        doc.setFontSize(18);
         doc.setFont('helvetica', 'bold');
-        setColor(COLORS.title);
-        const titleLines = doc.splitTextToSize(currentPaperTitle, CONTENT_W);
-        doc.text(titleLines, MARGIN_L, y);
-        y += titleLines.length * 7 + 2;
+        rgb(C.title);
+        const titleWrapped = doc.splitTextToSize(currentPaperTitle, CW);
+        newPageIfNeeded(lhMm(18) * titleWrapped.length + 6);
+        doc.text(titleWrapped, ML, y);
+        y += lhMm(18) * titleWrapped.length + 2;
 
         // Authors
-        if (currentAuthors && currentAuthors !== "Authors not listed") {
-            doc.setFontSize(9.5);
-            doc.setFont('helvetica', 'normal');
-            setColor(COLORS.muted);
-            const authLines = doc.splitTextToSize(currentAuthors, CONTENT_W);
-            doc.text(authLines, MARGIN_L, y);
-            y += authLines.length * 4.5 + 3;
+        if (currentAuthors && currentAuthors !== 'Authors not listed') {
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'italic');
+            rgb(C.muted);
+            const authWrapped = doc.splitTextToSize(currentAuthors, CW);
+            newPageIfNeeded(lhMm(10) * authWrapped.length + 4);
+            doc.text(authWrapped, ML, y);
+            y += lhMm(10) * authWrapped.length + 3;
         }
-        y += 4;
-        drawHRule();
+        y += 2;
+        hRule();
 
-        // ── Render a section ─────────────────────────
-        function renderSection(icon, label, markdownText) {
-            checkPage(14);
-            y += 3;
+        // ── Section renderer ──────────────────────────
+        // Section labels — ASCII only (no emojis; jsPDF helvetica can't render them)
+        const SECTION_LABELS = {
+            summary:            'Summary',
+            key_findings:       'Key Findings & Contributions',
+            methodology:        'Methodology',
+            limitations_future: 'Limitations & Future Work',
+        };
 
-            // Section heading
+        function renderSection(label, markdownText) {
+            if (!markdownText || !markdownText.trim()) return;
+            newPageIfNeeded(18);
+            y += 4;
+
+            // Section heading accent bar
+            frgb(C.accent);
+            doc.rect(ML, y - 4, 3, 6, 'F');
+
             doc.setFontSize(12);
             doc.setFont('helvetica', 'bold');
-            setColor(COLORS.heading);
-            doc.text(`${icon}  ${label}`, MARGIN_L, y);
+            rgb(C.heading);
+            doc.text(label.toUpperCase(), ML + 5, y);
             y += 2;
-            drawHRule();
+            hRule(C.divider, 0.3);
 
-            // Parse the markdown text line by line
             const lines = markdownText.split('\n');
             for (const rawLine of lines) {
                 const line = rawLine.trimEnd();
-                if (!line.trim()) { y += 2; continue; }
+                if (!line.trim()) { y += 1.5; continue; }
 
                 if (line.startsWith('### ')) {
                     // Sub-heading
-                    checkPage(8);
+                    newPageIfNeeded(10);
                     y += 2;
-                    const sub = line.replace(/^###\s*/, '').trim();
-                    doc.setFontSize(9);
+                    const subText = line.replace(/^###\s*/, '').trim();
+                    const clean   = stripInlineMarkdown(subText).toUpperCase();
+                    doc.setFontSize(8);
                     doc.setFont('helvetica', 'bold');
-                    setColor(COLORS.subheading);
-                    const subLines = doc.splitTextToSize(sub.toUpperCase(), CONTENT_W);
-                    doc.text(subLines, MARGIN_L, y);
-                    y += subLines.length * 4 + 1;
+                    rgb(C.sub);
+                    const subWrapped = doc.splitTextToSize(clean, CW);
+                    doc.text(subWrapped, ML, y);
+                    y += lhMm(8) * subWrapped.length + 1;
 
-                } else if (line.startsWith('## ')) {
-                    checkPage(8);
-                    y += 2;
-                    const sub = line.replace(/^##\s*/, '').trim();
-                    addWrappedText(sub, 10, COLORS.subheading, { bold: true });
+                } else if (line.startsWith('## ') || line.startsWith('# ')) {
+                    newPageIfNeeded(9);
+                    y += 1.5;
+                    const subText = line.replace(/^#{1,2}\s*/, '').trim();
+                    textBlock(stripInlineMarkdown(subText), 10, C.sub, { bold: true });
                     y += 1;
 
-                } else if (line.match(/^[-*]\s+/)) {
+                } else if (/^[-*]\s+/.test(line)) {
                     // Bullet point
-                    checkPage(6);
                     const bulletText = line.replace(/^[-*]\s+/, '').trim();
-                    // Strip markdown inline (bold, italic, code, HTML tags)
                     const clean = stripInlineMarkdown(bulletText);
+                    const ptSize = 10;
+                    const lh = lhMm(ptSize);
+                    const bulletW = CW - 7;
+                    const bLines = doc.splitTextToSize(clean, bulletW);
+                    newPageIfNeeded(lh * bLines.length + 2);
+
                     // Bullet dot
-                    doc.setFontSize(10);
+                    doc.setFontSize(14);
                     doc.setFont('helvetica', 'normal');
-                    setColor(COLORS.accent);
-                    doc.text('•', MARGIN_L + 1, y);
+                    rgb(C.accent);
+                    doc.text('\u2022', ML + 1, y);   // Unicode bullet (safe in jsPDF)
+
                     // Bullet text
-                    setColor(COLORS.body);
-                    const bLines = doc.splitTextToSize(clean, CONTENT_W - 8);
-                    const lineH = 10 * 0.3528 * 1.5;
-                    checkPage(lineH * bLines.length + 1);
-                    doc.text(bLines, MARGIN_L + 6, y);
-                    y += lineH * bLines.length + 0.5;
+                    doc.setFontSize(ptSize);
+                    doc.setFont('helvetica', 'normal');
+                    rgb(C.body);
+                    doc.text(bLines, ML + 7, y);
+                    y += lh * bLines.length + 0.8;
 
                 } else {
-                    // Regular paragraph text
+                    // Paragraph
                     const clean = stripInlineMarkdown(line.trim());
-                    if (clean) {
-                        addWrappedText(clean, 10, COLORS.body, { lineHeightFactor: 1.5 });
-                        y += 0.5;
-                    }
+                    if (clean) textBlock(clean, 10, C.body);
+                    y += 0.5;
                 }
             }
-            y += 4;
+            y += 3;
         }
 
-        // ── Related Papers section ───────────────────
+        // ── Related papers renderer ───────────────────
         function renderRelatedPapers(papers) {
             if (!papers || papers.length === 0) return;
-            checkPage(14);
-            y += 3;
+            newPageIfNeeded(18);
+            y += 4;
+
+            frgb(C.accent);
+            doc.rect(ML, y - 4, 3, 6, 'F');
             doc.setFontSize(12);
             doc.setFont('helvetica', 'bold');
-            setColor(COLORS.heading);
-            doc.text('🔗  Related Papers', MARGIN_L, y);
+            rgb(C.heading);
+            doc.text('RELATED PAPERS', ML + 5, y);
             y += 2;
-            drawHRule();
+            hRule(C.divider, 0.3);
 
             papers.forEach((paper, idx) => {
-                checkPage(16);
-                // Title as link-styled text
+                newPageIfNeeded(18);
+                // Title
+                const titleText = `${idx + 1}.  ${paper.title || 'Untitled'}`;
                 doc.setFontSize(10);
                 doc.setFont('helvetica', 'bold');
-                setColor(COLORS.link);
-                const titleLines = doc.splitTextToSize(`${idx + 1}. ${paper.title}`, CONTENT_W);
-                doc.text(titleLines, MARGIN_L, y);
-                y += titleLines.length * 4.5 + 1;
+                rgb(C.link);
+                const tLines = doc.splitTextToSize(titleText, CW);
+                doc.text(tLines, ML, y);
+                y += lhMm(10) * tLines.length + 1;
 
                 // Snippet
                 if (paper.snippet) {
                     doc.setFontSize(9);
                     doc.setFont('helvetica', 'normal');
-                    setColor(COLORS.muted);
-                    const snippetLines = doc.splitTextToSize(paper.snippet, CONTENT_W - 4);
-                    checkPage(snippetLines.length * 4 + 2);
-                    doc.text(snippetLines, MARGIN_L + 2, y);
-                    y += snippetLines.length * 4 + 1;
+                    rgb(C.muted);
+                    const sLines = doc.splitTextToSize(paper.snippet, CW - 4);
+                    newPageIfNeeded(lhMm(9) * sLines.length + 2);
+                    doc.text(sLines, ML + 3, y);
+                    y += lhMm(9) * sLines.length + 1;
                 }
 
-                // URL in tiny muted text
+                // URL
                 if (paper.url) {
                     doc.setFontSize(7.5);
-                    setColor(COLORS.muted);
-                    const urlTrunc = paper.url.length > 80 ? paper.url.slice(0, 77) + '...' : paper.url;
-                    doc.text(urlTrunc, MARGIN_L + 2, y);
-                    y += 4;
+                    doc.setFont('helvetica', 'normal');
+                    rgb(C.muted);
+                    const urlText = paper.url.length > 90
+                        ? paper.url.slice(0, 87) + '...'
+                        : paper.url;
+                    const uLines = doc.splitTextToSize(urlText, CW - 4);
+                    newPageIfNeeded(lhMm(7.5) * uLines.length + 2);
+                    doc.text(uLines, ML + 3, y);
+                    y += lhMm(7.5) * uLines.length + 1;
                 }
 
+                // Divider between papers
                 if (idx < papers.length - 1) {
-                    setDrawColor(COLORS.divider);
-                    doc.setLineWidth(0.2);
-                    doc.line(MARGIN_L, y, PAGE_W - MARGIN_R, y);
+                    drgb(C.divider);
+                    doc.setLineWidth(0.15);
+                    doc.line(ML, y, PAGE_W - MR, y);
                     y += 3;
                 }
             });
         }
 
-        // ── Render all sections ──────────────────────
-        renderSection('📋', 'Summary', rawSections.summary);
-        renderSection('🔑', 'Key Findings & Contributions', rawSections.key_findings);
-        renderSection('🔬', 'Methodology', rawSections.methodology);
-        renderSection('⚠', 'Limitations & Future Work', rawSections.limitations_future);
+        // ── Render all sections ───────────────────────
+        renderSection(SECTION_LABELS.summary,            rawSections.summary);
+        renderSection(SECTION_LABELS.key_findings,       rawSections.key_findings);
+        renderSection(SECTION_LABELS.methodology,        rawSections.methodology);
+        renderSection(SECTION_LABELS.limitations_future, rawSections.limitations_future);
         renderRelatedPapers(rawSections.related_papers);
 
-        // ── Footer on every page ─────────────────────
+        // ── Page footers ──────────────────────────────
         const totalPages = doc.getNumberOfPages();
         for (let i = 1; i <= totalPages; i++) {
             doc.setPage(i);
+            drgb(C.divider);
+            doc.setLineWidth(0.2);
+            doc.line(ML, PAGE_H - MB + 4, PAGE_W - MR, PAGE_H - MB + 4);
             doc.setFontSize(7.5);
             doc.setFont('helvetica', 'normal');
-            setColor(COLORS.muted);
-            doc.text(`ResearchBeacon  ·  Page ${i} of ${totalPages}`, PAGE_W / 2, PAGE_H - 10, { align: 'center' });
+            rgb(C.muted);
+            doc.text(
+                `ResearchBeacon  \u00B7  Page ${i} of ${totalPages}`,
+                PAGE_W / 2, PAGE_H - MB + 9, { align: 'center' }
+            );
         }
 
-        doc.save('researchbeacon-analysis.pdf');
+        const safeName = (currentPaperTitle || 'analysis')
+            .slice(0, 40)
+            .replace(/[^a-z0-9\s-]/gi, '')
+            .trim()
+            .replace(/\s+/g, '-')
+            .toLowerCase();
+        doc.save(`researchbeacon-${safeName}.pdf`);
     });
 
     // ── Strip inline markdown for plain text PDF ─────

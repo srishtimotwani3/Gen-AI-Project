@@ -376,11 +376,10 @@ input::placeholder {
     transform: scale(1.1);
 }
 
-/* Analyze PDF button — inline sibling to file-card */
+/* Analyze PDF button — inline sibling to file-card, matches Analyze Paper button exactly */
 .file-card-analyze-btn {
     flex-shrink: 0;
-    padding: 0.6rem 1.25rem;
-    font-size: 0.88rem;
+    align-self: stretch;
 }
 
 /* ── Loading ────────────────────────────────────── */
